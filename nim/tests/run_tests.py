@@ -7,6 +7,7 @@ compiler, the native DLL, a built original C# GraphQL server, and a suitable
 """
 import argparse
 import contextlib
+import http.client
 import http.server
 import json
 import os
@@ -17,8 +18,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 
 BASE = pathlib.Path(__file__).resolve().parents[1]
 
@@ -109,15 +108,22 @@ def server(kind, binary, args, logs):
                             f'{kind} server exited; see {log.name}'
                         )
                     try:
-                        request = urllib.request.Request(
-                            origin + '/v1/graphql',
-                            data=b'{"query":"{links{id}}"}',
-                            headers={'Content-Type': 'application/json'},
+                        connection = http.client.HTTPConnection(
+                            '127.0.0.1', port, timeout=.3
                         )
-                        with urllib.request.urlopen(
-                            request, timeout=.3
-                        ) as response:
+                        try:
+                            connection.request(
+                                'POST', '/v1/graphql',
+                                body=b'{"query":"{links{id}}"}',
+                                headers={'Content-Type': 'application/json'},
+                            )
+                            response = connection.getresponse()
+                            if response.status != 200:
+                                time.sleep(.05)
+                                continue
                             data = json.load(response)
+                        finally:
+                            connection.close()
                         if (
                             data.get('errors')
                             or data.get('data', {}).get('links') != []
@@ -126,7 +132,7 @@ def server(kind, binary, args, logs):
                                 f'{kind} fresh database query failed: {data}'
                             )
                         break
-                    except (urllib.error.URLError, TimeoutError):
+                    except (OSError, http.client.HTTPException):
                         time.sleep(.05)
                 else:
                     raise RuntimeError(f'{kind} server startup timed out')
